@@ -12,6 +12,7 @@ import os
 
 # --- 1. Data Mapping and Pre-Calculation Utility ---
 
+
 def get_pdf_input_details(state: dict) -> dict:
     """
     Maps the Master Agent's state data to the keys required by the PDF generator.
@@ -63,13 +64,13 @@ async def _async_gen_sl(cust_details: dict) -> str:
         width, height = A4
         
         # --- HEADER & TITLE ---
-        c.setFont("Helvetica-Bold", 16)
+        c.setFont("Times-Bold", 16)
         c.drawString(inch, height - inch, "CredGen Financial Services")
-        c.setFont("Helvetica-Bold", 14)
+        c.setFont("Times-Bold", 14)
         c.drawString(inch, height - inch - 0.3*inch, "Personal Loan Sanction Letter")
 
         # --- DATE & ADDRESS ---
-        c.setFont("Helvetica", 11)
+        c.setFont("Times-Roman", 11)
         c.drawString(inch, height - 2*inch, f"Date: {date_issue}")
         c.drawString(inch, height - 2.5*inch, f"To,")
         c.drawString(inch, height - 2.7*inch, f"Customer: {cust_details['cust_name']}")
@@ -85,18 +86,18 @@ async def _async_gen_sl(cust_details: dict) -> str:
         col2_x = inch * 5.0
         row_height = 0.3*inch
 
-        c.setFont("Helvetica-Bold", 11)
+        c.setFont("Times-Bold", 11)
         c.drawString(col1_x, y_start, "Loan Parameter")
         c.drawString(col2_x, y_start, "Sanctioned Value")
         
         c.line(inch, y_start - 0.1*inch, width - inch, y_start - 0.1*inch)
         
         y = y_start - row_height
-        c.setFont("Helvetica", 11)
+        c.setFont("Times-Roman", 11)
         
         # Loan Amount
         c.drawString(col1_x, y, "Loan Amount")
-        c.drawString(col2_x, y, f"\u20B9 {cust_details['amt']:,.0f} ONLY")
+        c.drawString(col2_x, y, f"Rs. {cust_details['amt']:,.0f} ONLY")
         y -= row_height
 
         # Tenure
@@ -111,7 +112,7 @@ async def _async_gen_sl(cust_details: dict) -> str:
 
         # Processing Charges
         c.drawString(col1_x, y, "Processing Charges (1%)")
-        c.drawString(col2_x, y, f"\u20B9{cust_details['processing_charges']:,.2f}")
+        c.drawString(col2_x, y, f"Rs. {cust_details['processing_charges']:,.2f}")
         y -= row_height
         
         # Co-Borrower
@@ -122,12 +123,12 @@ async def _async_gen_sl(cust_details: dict) -> str:
         c.line(inch, y + 0.1*inch, width - inch, y + 0.1*inch)
 
         # --- CLOSING ---
-        c.setFont("Helvetica", 10)
+        c.setFont("Times-Roman", 10)
         c.drawString(inch, y - row_height, "Please sign and return a copy of this letter within 7 days to accept the terms.")
         c.drawString(inch, y - 1.5*inch, "Thank you for choosing CredGen.")
         c.drawString(inch, y - 2.5*inch, "Sincerely,")
         
-        c.setFont("Helvetica-Bold", 11)
+        c.setFont("Times-Roman", 11)
         c.drawString(inch, y - 3*inch, "CredGen Agent Team")
 
         c.save()
