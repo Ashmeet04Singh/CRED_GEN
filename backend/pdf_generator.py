@@ -145,7 +145,7 @@ def generate_sanction_letter(master_agent_state: dict) -> str:
     """
     cust_details = get_pdf_input_details(master_agent_state)
     
-    # Run the async function synchronously
+    
     try:
         # Get the current event loop. If one is running, use it. Otherwise, create and run a new one.
         try:
