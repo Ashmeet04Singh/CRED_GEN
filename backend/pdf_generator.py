@@ -1,65 +1,166 @@
 import asyncio
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
-from pdfrw import PdfReader, PdfWriter, PageMerge
 from datetime import date
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.lib.units import inch
 from pathlib import Path
+import os
 
-pdfmetrics.registerFont(TTFont('Arial', 'Arial.ttf'))
+# Removed dependency on pdfrw (PdfReader, PdfWriter, PageMerge)
+# Removed dependency on custom fonts (Arial.ttf) and PdfMetrics
+# This code generates the entire PDF content from scratch using reportlab's built-in fonts.
 
-current_dir = Path(__file__).resolve()
-root_path = current_dir.parent
-temp_path = root_path / "data" / "letter_temp.pdf"
+# --- 1. Data Mapping and Pre-Calculation Utility ---
 
-async def gen_sl(cust_details: dict) -> str:
-    overlay = "overlay.pdf"
-    temp_pdf = PdfReader(temp_path)
-    num_pages = len(temp_pdf.pages)
-    out_path = f"letter_{cust_details['cust_name']}.pdf"
-    date_issue = date.today()
-    field_map = {
-    0: [
-        (f"Customer: {cust_details['cust_name']}", 10, 770),
-        (f"Address: {cust_details['cust_add']}", 10, 750),
-        (f"Date: {date_issue}", 10, 730),
-        (f"Personal Loan", 200, 450),
-        (f"{cust_details['coborrower']}", 200, 410),
-        (f"\u20B9 {cust_details['amt']} ONLY", 200, 370),
-        (f"{cust_details['tenure']} Months", 200, 330),
-        (f"{cust_details['roi']} %", 200, 290),
-        (f"\u20B9{cust_details['processing_charges']:,.2f}", 200, 250)
-    ]}
-    def create_overlay():
-        c= canvas.Canvas(overlay, pagesize=A4)
-        c.setFont("Arial", 11)
-        for page_index in range(num_pages):
+def get_pdf_input_details(state: dict) -> dict:
+    """
+    Maps the Master Agent's state data to the keys required by the PDF generator.
+    """
+    entities = state.get('entities', {})
+    loan_amount = entities.get('loan_amount', 0)
+    
+    # Policy Rule: Calculate 1% processing fee of the loan amount
+    processing_charges = loan_amount * 0.01
 
-            if page_index in field_map:
-                for text, x, y in field_map[page_index]:
-                    c.drawString(x, y, text)
+    details = {
+        # Required KYC/Application fields
+        'cust_name': entities.get('name', 'Loan Applicant'),
+        'cust_add': f"{entities.get('address', 'Address N/A')}, Pincode: {entities.get('pincode', 'N/A')}",
+        'amt': loan_amount,
+        'tenure': entities.get('tenure', 36), # in months
+        
+        # Offer details
+        'roi': state.get('interest_rate', 15.0),
+        'processing_charges': processing_charges,
+        
+        # Mocked fields (if not collected by Master Agent)
+        'coborrower': entities.get('coborrower', 'NIL'), 
+    }
+    return details
 
-            c.showPage()
+# --- 2. Core Asynchronous PDF Generation (Full Generation from Scratch) ---
+
+async def _async_gen_sl(cust_details: dict) -> str:
+    """
+    Generates the entire PDF Sanction Letter from scratch using reportlab.
+    This replaces the original file-dependent 'gen_sl' function.
+    """
+    # Define output file path relative to the project structure
+    current_dir = Path(__file__).resolve()
+    # Adjust root path assumption to match the project structure (backend/pdf_generator.py -> project_root/data)
+    root_path = current_dir.parent.parent 
+    safe_name = cust_details['cust_name'].replace(' ', '_').replace('.', '')
+    
+    # Ensure the 'data' directory exists for the output file
+    data_dir = root_path / "data"
+    data_dir.mkdir(exist_ok=True)
+    out_path = data_dir / f"Sanction_Letter_{safe_name}_{date.today()}.pdf"
+    
+    date_issue = date.today().strftime("%B %d, %Y")
+    
+    def create_sanction_letter():
+        c = canvas.Canvas(str(out_path), pagesize=A4)
+        width, height = A4
+        
+        # --- HEADER & TITLE ---
+        c.setFont("Helvetica-Bold", 16)
+        c.drawString(inch, height - inch, "CredGen Financial Services")
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(inch, height - inch - 0.3*inch, "Personal Loan Sanction Letter")
+
+        # --- DATE & ADDRESS ---
+        c.setFont("Helvetica", 11)
+        c.drawString(inch, height - 2*inch, f"Date: {date_issue}")
+        c.drawString(inch, height - 2.5*inch, f"To,")
+        c.drawString(inch, height - 2.7*inch, f"Customer: {cust_details['cust_name']}")
+        c.drawString(inch, height - 2.9*inch, f"Address: {cust_details['cust_add']}")
+
+        # --- SALUTATION ---
+        c.drawString(inch, height - 3.5*inch, f"Dear {cust_details['cust_name']},")
+        c.drawString(inch, height - 3.8*inch, "We are pleased to inform you that your application for a Personal Loan has been approved.")
+        
+        # --- LOAN DETAILS TABLE/SECTION ---
+        y_start = height - 4.5*inch
+        col1_x = inch * 1.5
+        col2_x = inch * 5.0
+        row_height = 0.3*inch
+
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(col1_x, y_start, "Loan Parameter")
+        c.drawString(col2_x, y_start, "Sanctioned Value")
+        
+        c.line(inch, y_start - 0.1*inch, width - inch, y_start - 0.1*inch)
+        
+        y = y_start - row_height
+        c.setFont("Helvetica", 11)
+        
+        # Loan Amount
+        c.drawString(col1_x, y, "Loan Amount")
+        c.drawString(col2_x, y, f"\u20B9 {cust_details['amt']:,.0f} ONLY")
+        y -= row_height
+
+        # Tenure
+        c.drawString(col1_x, y, "Tenure")
+        c.drawString(col2_x, y, f"{cust_details['tenure']} Months")
+        y -= row_height
+
+        # Interest Rate (ROI)
+        c.drawString(col1_x, y, "Interest Rate (ROI)")
+        c.drawString(col2_x, y, f"{cust_details['roi']:.2f} % per annum")
+        y -= row_height
+
+        # Processing Charges
+        c.drawString(col1_x, y, "Processing Charges (1%)")
+        c.drawString(col2_x, y, f"\u20B9{cust_details['processing_charges']:,.2f}")
+        y -= row_height
+        
+        # Co-Borrower
+        c.drawString(col1_x, y, "Co-Borrower")
+        c.drawString(col2_x, y, f"{cust_details['coborrower']}")
+        y -= row_height
+        
+        c.line(inch, y + 0.1*inch, width - inch, y + 0.1*inch)
+
+        # --- CLOSING ---
+        c.setFont("Helvetica", 10)
+        c.drawString(inch, y - row_height, "Please sign and return a copy of this letter within 7 days to accept the terms.")
+        c.drawString(inch, y - 1.5*inch, "Thank you for choosing CredGen.")
+        c.drawString(inch, y - 2.5*inch, "Sincerely,")
+        
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(inch, y - 3*inch, "CredGen Agent Team")
 
         c.save()
+        
+    await asyncio.to_thread(create_sanction_letter)
+
+    return str(out_path)
+
+# --- 3. Synchronous Wrapper for Flask/app.py ---
+
+def generate_sanction_letter(master_agent_state: dict) -> str:
+    """
+    Synchronous wrapper to be called by backend/app.py.
+    It prepares the data and executes the async PDF generation.
+    """
+    cust_details = get_pdf_input_details(master_agent_state)
     
-    await asyncio.to_thread(create_overlay)
+    # Run the async function synchronously
+    try:
+        # Get the current event loop. If one is running, use it. Otherwise, create and run a new one.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+        pdf_path = loop.run_until_complete(_async_gen_sl(cust_details))
+            
+        return pdf_path
+        
+    except Exception as e:
+        print(f"PDF Generation Error: {e}")
+        return f"ERROR: Failed to generate PDF: {e}"
 
-    def merge():
-        overlay_pdf = PdfReader(overlay)
-
-        for pg in range(num_pages):
-            temp_pg = temp_pdf.pages[pg]
-            overlay_pg = overlay_pdf.pages[pg]
-            merger = PageMerge(temp_pg)
-            merger.add(overlay_pg).render()
-
-        PdfWriter().write(out_path, temp_pdf)
-
-    await asyncio.to_thread(merge)
-
-    return out_path
-
-#demo entry
-#asyncio.run(gen_sl(cust_details = {'cust_name': 'Mr. Wilman', 'cust_add': 'Street 7, Dummy City, Earth','coborrower':'NIL', 'amt': 4500000, 'tenure': 132, 'roi': 10.05, 'processing_charges':45500}))
+# Removed the original code body including the unused 'pdfmetrics.registerFont' and 'temp_path' logic.
+# The original 'gen_sl' function is replaced by the complete workflow above.    
