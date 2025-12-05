@@ -15,7 +15,7 @@ def train_and_save_model():
     current_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(os.path.dirname(current_dir)) # Go up to CredGen/
     
-    data_path = os.path.join(project_root, 'data', 'loan_approval_training_dataset_2.csv')
+    data_path = os.path.join(project_root, 'data', 'loan_history.csv')
     model_output_path = os.path.join(project_root, 'data', 'underwriting_model.pkl')
 
     print(f"Reading data from: {data_path}")
@@ -114,4 +114,5 @@ def train_and_save_model():
     print(f"Saved model to: {model_output_path}")
 
 if __name__ == "__main__":
+
     train_and_save_model()
