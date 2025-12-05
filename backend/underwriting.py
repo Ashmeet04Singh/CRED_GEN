@@ -1,5 +1,6 @@
 import numpy as np
 import pickle
+import joblib
 import os
 import pandas as pd # <-- REQUIRED for model pipeline input
 
@@ -13,7 +14,7 @@ def load_underwriting_model(filepath: str):
                 return pickle.load(f)
         except Exception as e:
             print(f"Failed to load REAL model: {e}. Falling back to MOCK.")
-    
+
     # --- MOCK AI MODEL (Fallback/Development) ---
     class MockModel:
         def predict_proba(self, data: dict):
@@ -41,15 +42,37 @@ class UnderwritingAgent:
         self.MAX_LOAN = 2000000 
         self.RISK_THRESHOLD_REJECT = 0.80 # AI Score > 0.80 is Auto-Reject Rule
         
-        # --- List of all features the model expects (CRITICAL) ---
-        self.MODEL_FEATURES = [
-            'Age', 'Income', 'Loan_Amount', 'Tenure', 'CIBIL_Score', 
-            'Existing_EMIs', 'Debt_to_Income_Ratio', 
-            'Employment_Type', 'Loan_Purpose', 'Residence_Type'
+        self.numerical_features = [
+            'age', 'years_employed', 'annual_income', 'monthly_income',
+            'existing_loan_balance', 'existing_emi_monthly', 'credit_score', 
+            'cibil_score', 'payment_history_default', 'credit_inquiry_last_6m',
+            'num_open_accounts', 'num_delinquent_accounts', 'property_value',
+            'requested_loan_amount', 'requested_loan_tenure', 'pre_approved_limit',
+            'monthly_income_after_emi', 'debt_to_income_ratio', 'loan_to_income_ratio',
+            'estimated_monthly_emi', 'emi_to_income_ratio', 'total_monthly_obligation',
+            'obligation_to_income_ratio', 'loan_to_asset_ratio', 'credit_age_months',
+            'income_to_loan_ratio', 'emi_affordability', 'asset_coverage',
+            'stability_score'
         ]
 
+        self.categorical_features = [
+            'gender', 'city', 'employment_type', 'education_level',
+            'marital_status', 'home_ownership', 'property_type'
+        ]
+
+        # --- Full model features order (used in _preprocess_input) ---
+        self.model_features_order = self.numerical_features + self.categorical_features
+
+        # # --- List of all features the model expects (CRITICAL) ---
+        # self.MODEL_FEATURES = [
+        #     'Age', 'Income', 'Loan_Amount', 'Tenure', 'CIBIL_Score', 
+        #     'Existing_EMIs', 'Debt_to_Income_Ratio', 
+        #     'Employment_Type', 'Loan_Purpose', 'Residence_Type'
+        # ]
+
         # --- AI LAYER: Load Model ---
-        self.model = load_underwriting_model('data/underwriting_model.pkl')
+        # self.model = load_underwriting_model('data/underwriting_model.pkl')
+        self.model = load_underwriting_model('underwriting_model.pkl')
         print("Underwriting Agent ready. ✅")
 
     def _hard_reject(self, reason: str) -> dict:
@@ -72,31 +95,71 @@ class UnderwritingAgent:
         """
         Creates a DataFrame from the conversational entities, applying defaults
         and ensuring all model features are present in the correct order.
+        Fully compatible with the trained pipeline.
         """
-        # Default values for features the Master Agent might not have collected yet
-        model_input = {
-            'Age': entities.get('age', 35),
-            'Income': entities.get('income', 500000),
-            'Loan_Amount': entities.get('loan_amount', 500000),
-            'Tenure': entities.get('tenure', 36),
-            'CIBIL_Score': entities.get('CIBIL_Score', 700),
-            'Existing_EMIs': entities.get('Existing_EMIs', 5000),
-            'Debt_to_Income_Ratio': entities.get('Debt_to_Income_Ratio', 0.35),
-            # Categorical defaults
-            'Employment_Type': entities.get('employment_type', 'Salaried'),
-            'Loan_Purpose': entities.get('purpose', 'Consolidation'),
-            'Residence_Type': entities.get('Residence_Type', 'Rented')
+
+        # --- Numerical features ---
+        numerical_defaults = {
+            'age': 35,
+            'years_employed': 5,
+            'annual_income': 500000,
+            'monthly_income': 41666,
+            'existing_loan_balance': 0,
+            'existing_emi_monthly': 0,
+            'credit_score': 700,
+            'cibil_score': 700,
+            'payment_history_default': 0,
+            'credit_inquiry_last_6m': 0,
+            'num_open_accounts': 3,
+            'num_delinquent_accounts': 0,
+            'property_value': 1000000,
+            'requested_loan_amount': 500000,
+            'requested_loan_tenure': 36,
+            'pre_approved_limit': 500000,
+            'monthly_income_after_emi': 40000,
+            'debt_to_income_ratio': 0.3,
+            'loan_to_income_ratio': 0.2,
+            'estimated_monthly_emi': 15000,
+            'emi_to_income_ratio': 0.3,
+            'total_monthly_obligation': 20000,
+            'obligation_to_income_ratio': 0.35,
+            'loan_to_asset_ratio': 0.4,
+            'credit_age_months': 60,
+            'income_to_loan_ratio': 1.0,
+            'emi_affordability': 2.0,
+            'asset_coverage': 1.5,
+            'stability_score': 50
         }
-        
-        # Create DataFrame, ensuring column order matches self.MODEL_FEATURES
-        df_input = pd.DataFrame([model_input], columns=self.MODEL_FEATURES)
-        
-        # NOTE: A real pipeline would handle imputation (missing values) and 
-        # one-hot encoding/scaling here, but for this structure, we rely on 
-        # the model file (`underwriting_model.pkl`) to contain a pipeline 
-        # that handles these steps automatically.
-        
+
+        # Override defaults with provided entities
+        for key in numerical_defaults:
+            if key in entities:
+                numerical_defaults[key] = entities[key]
+
+        # --- Categorical features ---
+        categorical_defaults = {
+            'gender': 'M',
+            'city': 'Bangalore',
+            'employment_type': 'Salaried',
+            'education_level': 'Graduate',
+            'marital_status': 'Single',
+            'home_ownership': 'Rented',
+            'property_type': 'Apartment'
+        }
+
+        for key in categorical_defaults:
+            if key in entities:
+                categorical_defaults[key] = entities[key]
+
+        # Merge all features
+        model_input = {**numerical_defaults, **categorical_defaults}
+
+        # Convert to DataFrame in correct order
+        all_features_order = self.model_features_order  # should store numerical + categorical features here
+
+        df_input = pd.DataFrame([model_input], columns=all_features_order)
         return df_input
+
 
     def perform_underwriting(self, entities: dict) -> dict:
         """

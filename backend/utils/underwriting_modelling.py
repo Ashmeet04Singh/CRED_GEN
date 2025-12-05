@@ -143,162 +143,20 @@ print("Confusion Matrix:")
 print(confusion_matrix(y_test, y_pred_logreg))
 
 # ============================================
-# MODEL 2: CATBOOST (Advanced)
-# ============================================
-print("\n" + "="*60)
-print("TRAINING CATBOOST")
-print("="*60)
-
-from catboost import CatBoostClassifier, Pool
-
-# CatBoost can handle categorical features natively
-# We need to specify categorical feature indices
-cat_features_indices = [X.columns.get_loc(col) for col in categorical_features]
-
-# Create CatBoost pools
-train_pool = Pool(data=X_train, label=y_train, cat_features=cat_features_indices)
-test_pool = Pool(data=X_test, label=y_test, cat_features=cat_features_indices)
-
-# CatBoost model with balanced classes
-catboost_model = CatBoostClassifier(
-    iterations=300,           # Reduced for small dataset
-    depth=5,                  # Shallow trees
-    learning_rate=0.05,       # Lower learning rate
-    l2_leaf_reg=3,           # Regularization
-    border_count=32,         # For small dataset
-    random_seed=42,
-    verbose=100,             # Show progress every 100 iterations
-    auto_class_weights='Balanced',
-    task_type='CPU',
-    early_stopping_rounds=50,
-    use_best_model=True
-)
-
-# Train with early stopping
-catboost_model.fit(
-    train_pool,
-    eval_set=test_pool,
-    verbose=100
-)
-
-# Predictions
-y_pred_catboost = catboost_model.predict(X_test)
-y_pred_proba_catboost = catboost_model.predict_proba(X_test)[:, 1]
-
-f1_catboost = f1_score(y_test, y_pred_catboost)
-
-print(f"\nCatBoost Test F1 Score: {f1_catboost:.4f}")
-
-print("\nClassification Report:")
-print(classification_report(y_test, y_pred_catboost, 
-                            target_names=['Rejected', 'Approved']))
-
-print("Confusion Matrix:")
-print(confusion_matrix(y_test, y_pred_catboost))
-
-# ============================================
-# MODEL COMPARISON
-# ============================================
-print("\n" + "="*60)
-print("MODEL COMPARISON")
-print("="*60)
-
-# Calculate additional metrics
-from sklearn.metrics import accuracy_score, precision_score, recall_score, roc_auc_score
-
-metrics = {
-    'Model': ['Logistic Regression', 'CatBoost'],
-    'F1 Score': [f1_logreg, f1_catboost],
-    'Accuracy': [
-        accuracy_score(y_test, y_pred_logreg),
-        accuracy_score(y_test, y_pred_catboost)
-    ],
-    'Precision': [
-        precision_score(y_test, y_pred_logreg),
-        precision_score(y_test, y_pred_catboost)
-    ],
-    'Recall': [
-        recall_score(y_test, y_pred_logreg),
-        recall_score(y_test, y_pred_catboost)
-    ],
-    'ROC-AUC': [
-        roc_auc_score(y_test, y_pred_proba_logreg),
-        roc_auc_score(y_test, y_pred_proba_catboost)
-    ],
-    'CV F1 Mean': [
-        logreg_scores.mean(),
-        'N/A'  # CatBoost CV would need separate implementation
-    ]
-}
-
-metrics_df = pd.DataFrame(metrics)
-print(metrics_df.to_string(index=False))
-
-# ============================================
-# FEATURE IMPORTANCE ANALYSIS
-# ============================================
-print("\n" + "="*60)
-print("FEATURE IMPORTANCE (CatBoost)")
-print("="*60)
-
-# Get feature importance from CatBoost
-feature_importance = catboost_model.get_feature_importance()
-feature_names = X_train.columns.tolist()
-
-# Create DataFrame
-importance_df = pd.DataFrame({
-    'Feature': feature_names,
-    'Importance': feature_importance
-}).sort_values('Importance', ascending=False)
-
-print("\nTop 15 Most Important Features:")
-print(importance_df.head(15).to_string(index=False))
-
-# ============================================
-# THRESHOLD OPTIMIZATION FOR CATBOOST
-# ============================================
-print("\n" + "="*60)
-print("THRESHOLD OPTIMIZATION")
-print("="*60)
-
-from sklearn.metrics import f1_score
-
-# Find optimal threshold
-thresholds = np.arange(0.1, 0.9, 0.05)
-best_threshold = 0.5
-best_f1 = 0
-
-for threshold in thresholds:
-    y_pred_thresh = (y_pred_proba_catboost >= threshold).astype(int)
-    f1 = f1_score(y_test, y_pred_thresh)
-    
-    if f1 > best_f1:
-        best_f1 = f1
-        best_threshold = threshold
-
-print(f"Default threshold (0.5) F1: {f1_catboost:.4f}")
-print(f"Optimal threshold: {best_threshold:.2f}")
-print(f"Optimal threshold F1: {best_f1:.4f}")
-
-# Apply optimal threshold
-y_pred_optimized = (y_pred_proba_catboost >= best_threshold).astype(int)
-print(f"\nOptimized F1 Score: {f1_score(y_test, y_pred_optimized):.4f}")
-
-# ============================================
 # SAVE THE BEST MODEL
 # ============================================
 import joblib
 import json
 
 # Determine best model
-if f1_logreg > f1_catboost:
-    best_model = logreg_pipeline
-    best_model_name = "Logistic Regression"
-    best_f1 = f1_logreg
-else:
-    best_model = catboost_model
-    best_model_name = "CatBoost"
-    best_f1 = f1_catboost
+# if f1_logreg > f1_catboost:
+best_model = logreg_pipeline
+best_model_name = "Logistic Regression"
+best_f1 = f1_logreg
+# else:
+#     best_model = catboost_model
+#     best_model_name = "CatBoost"
+#     best_f1 = f1_catboost
 
 # Save model
 joblib.dump(best_model, 'underwriting_model.pkl')
@@ -306,7 +164,7 @@ joblib.dump(best_model, 'underwriting_model.pkl')
 # Save feature names
 model_info = {
     'model_name': best_model_name,
-    'f1_score': float(best_f1),8
+    'f1_score': float(best_f1),
     'features': {
         'numerical': numerical_features,
         'categorical': categorical_features,
@@ -331,6 +189,7 @@ print("="*60)
 print("Model saved as 'underwriting_model.pkl'")
 print("Model info saved as 'model_info.json'")
 
+
 # ============================================
 # PREDICTION FUNCTION FOR NEW DATA
 # ============================================
@@ -345,7 +204,7 @@ def predict_loan_approval(customer_data):
     Dictionary with prediction and probabilities
     """
     # Load model
-    model = joblib.load('best_loan_model.pkl')
+    model = joblib.load('/content/drive/My Drive/underwriting_model.pkl')
     
     # Add engineered features
     customer_data = create_features(customer_data)
@@ -494,3 +353,5 @@ try:
 except Exception as e:
     print(f"Prediction error: {e}")
     print("Make sure all required features are present in the input data")
+
+
