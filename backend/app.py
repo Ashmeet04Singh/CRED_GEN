@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from flask_cors import CORS 
+from flask_cors import CORS
 import os
 import uuid
 from datetime import datetime
@@ -9,10 +9,14 @@ from backend.master_agent import MasterAgent
 from backend.underwriting_agent import UnderwritingAgent
 from backend.sales_agent import SalesAgent
 
+# >>> NEW: Import the Fraud Agent <<<
+# Assuming FraudAgent is defined in backend/fraud_detection.py
+from backend.fraud_detection import FraudAgent 
+
 # --- 1. Initialization ---
 app = Flask(__name__)
 # CRITICAL: Allows your frontend (running on a different port/IP) to talk to this backend
-CORS(app) 
+CORS(app)
 
 # In a real app, this would be a database (Redis/Postgres)
 user_sessions = {}
@@ -21,14 +25,14 @@ user_sessions = {}
 master_agent = MasterAgent()
 underwriting_agent = UnderwritingAgent()
 sales_agent = SalesAgent()
+# >>> NEW: Initialize Fraud Agent <<<
+fraud_agent = FraudAgent() 
 
 # --- Utility Function Mocks ---
 
 def get_session_id(request):
     """Retrieves or creates a session ID."""
     # For simplicity, we use a mock unique ID or a value from the request header/cookie
-    # In a hackathon, using a fixed ID or generating one per request is common.
-    # We'll use a simple header/mock fallback for testing.
     session_id = request.headers.get('X-Session-ID', 'default_user_123')
     if session_id == 'default_user_123' and request.method == 'POST':
         # Generate a new ID if it's the first chat message
@@ -39,7 +43,15 @@ def generate_sanction_letter(state: dict) -> str:
     """Mocks the final step: generating a PDF sanction letter content."""
     entities = state.get('entities', {})
     loan_amount = entities.get('loan_amount', 0)
-    interest_rate = state.get('interest_rate', 'N/A')
+    # Check for the interest_rate in the 'current_offer' if available, otherwise fallback
+    interest_rate = state.get('current_offer', {}).get('interest_rate', state.get('interest_rate', 'N/A'))
+    
+    # Ensure interest_rate is a number for formatting if not 'N/A'
+    if isinstance(interest_rate, (int, float)):
+        rate_str = f"{interest_rate:.2f}%"
+    else:
+        rate_str = str(interest_rate)
+        
     name = entities.get('name', 'Applicant')
     date_today = datetime.now().strftime("%B %d, %Y")
     
@@ -48,7 +60,7 @@ def generate_sanction_letter(state: dict) -> str:
         f"Date: {date_today}\n"
         f"Applicant: {name}\n"
         f"Loan Amount Sanctioned: ₹{loan_amount:,}\n"
-        f"Final Interest Rate: {interest_rate:.2f}%\n"
+        f"Final Interest Rate: {rate_str}\n"
         f"Status: APPROVED FOR DISBURSEMENT\n"
         f"--------------------------------------\n"
     )
@@ -101,7 +113,7 @@ def chat():
 @app.route('/underwrite', methods=['POST'])
 def underwrite():
     """
-    Worker Agent Call: Executes the Underwriting Agent's AI + Rule-Based logic.
+    Worker Agent Call: Executes the **Fraud Agent** then the **Underwriting Agent's** logic.
     """
     session_id = get_session_id(request)
     current_state = user_sessions.get(session_id)
@@ -109,25 +121,52 @@ def underwrite():
     if not current_state:
         return jsonify({"error": "No active session."}), 400
 
-    # 1. Execute the AI + Rule-Based Underwriting Logic
+    # >>> 1. NEW: Execute Fraud Detection Check FIRST <<<
+    fraud_result = fraud_agent.perform_fraud_check(current_state['entities'])
+    
+    # Update the MasterAgent's state with the fraud findings
+    master_agent.state = current_state
+    master_agent.set_fraud_result(
+        fraud_score=fraud_result['fraud_score'],
+        fraud_flag=fraud_result['fraud_flag']
+    )
+    
+    # >>> 2. Fraud Decision Gate (Hard Rejection) <<<
+    if fraud_result['fraud_flag'] == "High":
+        # Immediately set final rejection status and skip underwriting
+        master_agent.set_underwriting_result(
+            risk_score=999,
+            approval_status="Rejected (Fraud)",
+            interest_rate=0.0
+        )
+        # Generate conversational response for immediate rejection
+        final_response = master_agent.generate_response(intent="application_rejected", confidence=1.0)
+        user_sessions[session_id] = master_agent.state # Update global state
+        
+        # NOTE: No need to route to sales if it's a hard fraud rejection
+        return jsonify(final_response)
+
+
+    # >>> 3. Execute the AI + Rule-Based Underwriting Logic (Only if fraud is not High) <<<
+    # In a real system, the fraud_score would be passed to underwriting_agent.perform_underwriting
     underwriting_result = underwriting_agent.perform_underwriting(current_state['entities'])
     
-    # 2. Update Master Agent's State with the result (must set its state first)
-    master_agent.state = current_state
+    # 4. Update Master Agent's State with the result (must set its state first)
+    # master_agent.state is already set above
     master_agent.set_underwriting_result(
         risk_score=underwriting_result['risk_score'],
         approval_status=underwriting_result['approval_status'],
-        # Use the rate calculated by the Underwriting Agent (or Sales Agent logic)
+        # Use the rate calculated by the Underwriting Agent
         interest_rate=underwriting_agent._mock_interest_rate(underwriting_result['risk_score']) 
     )
     
-    # 3. Get the next conversational response (the offer or rejection message)
+    # 5. Get the next conversational response (the offer or rejection message)
     final_response = master_agent.generate_response(intent=master_agent.state["last_intent"], confidence=1.0)
     
     # Update global state
     user_sessions[session_id] = master_agent.state
     
-    # NOTE: We intentionally set the worker to 'sales' here to get the Sales Agent's formatted offer message next
+    # NOTE: Route to 'sales' to get the Sales Agent's formatted offer message next
     final_response["worker"] = "sales" 
     final_response["action"] = "call_sales_api"
     
