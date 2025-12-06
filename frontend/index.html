@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CRED_GEN – Chatbot Widget</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="frontend/styles.css">
+</head>
+<body>
+    <main class="main-content">
+        <div class="content-wrapper">
+            <h1>CREDGEN Chatbot Widget</h1>
+            <p class="description">
+                This page hosts the floating CREDGEN assistant. <br>
+                Click the chat bubble in the bottom-right
+                to start a conversation powered by your AI-integrated backend.
+            </p>
+        </div>
+    </main>
+
+    <!-- Floating chatbot widget -->
+    <div id="credgen-chat-root">
+        <button id="credgen-toggle" class="credgen-toggle-btn" aria-label="Open chat">
+            <i class="fas fa-comment-dots"></i>
+        </button>
+
+        <div id="credgen-chatbox" class="credgen-chatbox" aria-hidden="true">
+            <header class="credgen-header">
+                <div class="credgen-header-info">
+                    <span class="credgen-title">CREDGEN Assistant</span>
+                    <span class="credgen-subtitle">AI-powered loan chatbot</span>
+                </div>
+                <div class="credgen-header-controls">
+                    <button id="credgen-fullscreen" class="credgen-control-btn" aria-label="Toggle fullscreen">
+                        <i class="fas fa-expand"></i>
+                    </button>
+                    <button id="credgen-clear" class="credgen-control-btn credgen-clear-btn" aria-label="Clear chat">
+                        <i class="fas fa-trash-alt"></i>
+                    </button>
+                    <button id="credgen-close" class="credgen-close-btn" aria-label="Close chat">×</button>
+                </div>
+            </header>
+
+            <div id="credgen-messages" class="credgen-messages" role="log" aria-live="polite">
+                <!-- Messages will be added by chat.js -->
+            </div>
+
+            <!-- File attachments preview area -->
+            <div id="credgen-attachments" class="credgen-attachments">
+                <!-- Attached files will appear here -->
+            </div>
+
+            <form id="credgen-form" class="credgen-input-row">
+                <button type="button" id="credgen-attach" class="credgen-attach-btn" aria-label="Attach files">
+                    <i class="fas fa-paperclip"></i>
+                </button>
+                <input
+                    id="credgen-input"
+                    type="text"
+                    placeholder="Type your message..."
+                    autocomplete="off"
+                    aria-label="Chat message"
+                />
+                <div class="credgen-quick-msg-container">
+                    <button type="button" id="credgen-quick-msg" class="credgen-quick-msg-btn" aria-label="Quick messages">
+                        <i class="fas fa-comment-dots"></i>
+                    </button>
+                    <div class="credgen-quick-msg-dropdown">
+                        <div class="quick-msg-item" data-msg="I need a loan">I need a loan</div>
+                        <div class="quick-msg-item" data-msg="What documents do I need?">What documents do I need?</div>
+                        <div class="quick-msg-item" data-msg="What is the interest rate?">What is the interest rate?</div>
+                        <div class="quick-msg-item" data-msg="How much can I borrow?">How much can I borrow?</div>
+                        <div class="quick-msg-item" data-msg="What is the processing time?">What is the processing time?</div>
+                    </div>
+                </div>
+                <input type="file" id="credgen-file-input" multiple style="display: none;" />
+                <button type="submit" class="credgen-send-btn">Send</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const toggleBtn = document.getElementById('credgen-toggle');
+            const closeBtn = document.getElementById('credgen-close');
+            const fullscreenBtn = document.getElementById('credgen-fullscreen');
+            const clearBtn = document.getElementById('credgen-clear');
+            const chatbox = document.getElementById('credgen-chatbox');
+            const chatRoot = document.getElementById('credgen-chat-root');
+            const form = document.getElementById('credgen-form');
+            const input = document.getElementById('credgen-input');
+            const messagesContainer = document.getElementById('credgen-messages');
+            const attachBtn = document.getElementById('credgen-attach');
+            const fileInput = document.getElementById('credgen-file-input');
+            const attachmentsContainer = document.getElementById('credgen-attachments');
+            const quickMsgBtn = document.getElementById('credgen-quick-msg');
+            const quickMsgContainer = document.querySelector('.credgen-quick-msg-container');
+            const quickMsgDropdown = document.querySelector('.credgen-quick-msg-dropdown');
+            
+            window.credgenAttachedFiles = window.credgenAttachedFiles || [];
+            const attachedFiles = window.credgenAttachedFiles;
+            const MAX_FILES = 5;
+            const MAX_TOTAL_SIZE = 10 * 1024 * 1024; // 10MB
+
+            // Toggle chatbox visibility
+            toggleBtn.addEventListener('click', function() {
+                const isHidden = chatbox.getAttribute('aria-hidden') === 'true';
+                chatbox.setAttribute('aria-hidden', !isHidden);
+                if (!isHidden) {
+                    input.focus();
+                }
+            });
+
+            // Close chatbox
+            closeBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                chatbox.setAttribute('aria-hidden', 'true');
+            });
+
+            // Clear chat securely
+            clearBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                if (confirm('Are you sure you want to clear all messages? This action cannot be undone.')) {
+                    // Clear messages from DOM
+                    messagesContainer.innerHTML = '';
+                    
+                    // Clear attachments
+                    clearAttachments();
+                    
+                    // Clear session from localStorage if exists
+                    if (typeof window.clearChatSession === 'function') {
+                        window.clearChatSession();
+                    }
+                    
+                    // Reset session ID
+                    if (typeof localStorage !== 'undefined') {
+                        localStorage.removeItem('CREDGEN_SESSION_ID');
+                    }
+                    
+                    // Notify chat.js to reset session
+                    if (typeof window.resetChatSession === 'function') {
+                        window.resetChatSession();
+                    }
+                    
+                    // Dispatch custom event for chat.js to handle
+                    window.dispatchEvent(new CustomEvent('credgen:clear-chat'));
+                }
+            });
+
+            // Click outside to close chatbox
+            document.addEventListener('click', function(e) {
+                const isHidden = chatbox.getAttribute('aria-hidden') === 'true';
+                if (isHidden) return;
+                
+                // Check if click is outside chatbox and toggle button
+                if (!chatRoot.contains(e.target) && !toggleBtn.contains(e.target)) {
+                    chatbox.setAttribute('aria-hidden', 'true');
+                }
+            });
+
+            // Prevent chatbox clicks from closing it
+            chatbox.addEventListener('click', function(e) {
+                e.stopPropagation();
+            });
+
+            // Toggle fullscreen
+            fullscreenBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                const isFullscreen = chatbox.classList.contains('fullscreen');
+                
+                if (isFullscreen) {
+                    // Exit fullscreen
+                    chatbox.classList.remove('fullscreen');
+                    fullscreenBtn.innerHTML = '<i class="fas fa-expand"></i>';
+                    fullscreenBtn.setAttribute('aria-label', 'Enter fullscreen');
+                } else {
+                    // Enter fullscreen
+                    chatbox.classList.add('fullscreen');
+                    fullscreenBtn.innerHTML = '<i class="fas fa-compress"></i>';
+                    fullscreenBtn.setAttribute('aria-label', 'Exit fullscreen');
+                }
+            });
+
+            // Quick message dropdown functionality
+            quickMsgBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                const isVisible = quickMsgDropdown.style.display === 'block';
+                quickMsgDropdown.style.display = isVisible ? 'none' : 'block';
+            });
+
+            // Close dropdown when clicking outside
+            document.addEventListener('click', function(e) {
+                if (!quickMsgContainer.contains(e.target)) {
+                    quickMsgDropdown.style.display = 'none';
+                }
+            });
+
+            // Handle quick message selection
+            const quickMsgItems = quickMsgDropdown.querySelectorAll('.quick-msg-item');
+            quickMsgItems.forEach(item => {
+                item.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    const message = this.getAttribute('data-msg');
+                    input.value = message;
+                    input.focus();
+                    quickMsgDropdown.style.display = 'none';
+                });
+            });
+
+            // Handle file attachment
+            attachBtn.addEventListener('click', function() {
+                fileInput.click();
+            });
+
+            // Handle file selection
+            fileInput.addEventListener('change', function(e) {
+                const files = Array.from(e.target.files);
+                
+                // Check if adding these files would exceed the limit
+                if (attachedFiles.length + files.length > MAX_FILES) {
+                    alert(`You can only attach up to ${MAX_FILES} files.`);
+                    fileInput.value = '';
+                    return;
+                }
+                
+                // Check total size
+                const totalSize = attachedFiles.reduce((sum, file) => sum + file.size, 0);
+                const newFilesSize = files.reduce((sum, file) => sum + file.size, 0);
+                
+                if (totalSize + newFilesSize > MAX_TOTAL_SIZE) {
+                    alert(`Total file size must not exceed 10MB. Current: ${formatBytes(totalSize)}`);
+                    fileInput.value = '';
+                    return;
+                }
+                
+                // Add files to the list
+                files.forEach(file => {
+                    window.credgenAttachedFiles.push(file);
+                    addFilePreview(file);
+                });
+                
+                // Clear file input for next selection
+                fileInput.value = '';
+                
+                // Update file count in button tooltip
+                updateAttachmentButton();
+                
+                // Auto-focus input after file selection
+                input.focus();
+            });
+
+            // Note: Form submission is handled by chat.js
+            // File attachment UI is kept for future implementation
+
+            // Add file preview
+            function addFilePreview(file) {
+                const fileElement = document.createElement('div');
+                fileElement.className = 'attachment-preview';
+                fileElement.dataset.id = file.name + file.size;
+                
+                const fileType = getFileType(file.type);
+                const icon = getFileIcon(fileType);
+                
+                fileElement.innerHTML = `
+                    <div class="file-info">
+                        <div class="file-icon">${icon}</div>
+                        <div class="file-details">
+                            <div class="file-name">${truncateFileName(file.name)}</div>
+                            <div class="file-size">${formatBytes(file.size)}</div>
+                        </div>
+                    </div>
+                    <button type="button" class="remove-file" aria-label="Remove file">
+                        <i class="fas fa-times"></i>
+                    </button>
+                `;
+                
+                attachmentsContainer.appendChild(fileElement);
+                attachmentsContainer.style.display = 'block';
+                
+                // Add remove functionality
+                const removeBtn = fileElement.querySelector('.remove-file');
+                removeBtn.addEventListener('click', function() {
+                    removeFile(file);
+                });
+            }
+
+            // Remove file from attachments
+            function removeFile(file) {
+                const fileId = file.name + file.size;
+                window.credgenAttachedFiles = window.credgenAttachedFiles.filter(f => f.name + f.size !== fileId);
+                
+                const fileElement = attachmentsContainer.querySelector(`[data-id="${fileId}"]`);
+                if (fileElement) {
+                    fileElement.remove();
+                }
+                
+                if (window.credgenAttachedFiles.length === 0) {
+                    attachmentsContainer.style.display = 'none';
+                }
+                
+                updateAttachmentButton();
+            }
+
+            // Clear all attachments
+            function clearAttachments() {
+                window.credgenAttachedFiles = [];
+                attachmentsContainer.innerHTML = '';
+                attachmentsContainer.style.display = 'none';
+                updateAttachmentButton();
+            }
+            
+            // Get file type category
+            function getFileType(mimeType) {
+                if (mimeType.startsWith('image/')) return 'image';
+                if (mimeType === 'application/pdf') return 'pdf';
+                if (mimeType.includes('word') || mimeType.includes('document') || mimeType.includes('text')) return 'document';
+                if (mimeType.includes('spreadsheet') || mimeType.includes('excel')) return 'spreadsheet';
+                return 'file';
+            }
+
+            // Get file icon based on type
+            function getFileIcon(type) {
+                const icons = {
+                    'pdf': '<i class="fas fa-file-pdf"></i>',
+                    'image': '<i class="fas fa-file-image"></i>',
+                    'document': '<i class="fas fa-file-word"></i>',
+                    'spreadsheet': '<i class="fas fa-file-excel"></i>',
+                    'file': '<i class="fas fa-file"></i>'
+                };
+                return icons[type] || icons.file;
+            }
+
+            // Update attachment button with file count
+            function updateAttachmentButton() {
+                const count = window.credgenAttachedFiles.length;
+                if (count > 0) {
+                    attachBtn.classList.add('has-files');
+                    attachBtn.setAttribute('data-count', count);
+                } else {
+                    attachBtn.classList.remove('has-files');
+                    attachBtn.removeAttribute('data-count');
+                }
+            }
+
+            // Format bytes to human readable format
+            function formatBytes(bytes, decimals = 2) {
+                if (bytes === 0) return '0 Bytes';
+                const k = 1024;
+                const dm = decimals < 0 ? 0 : decimals;
+                const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+            }
+
+            // Truncate long file names
+            function truncateFileName(name, maxLength = 20) {
+                if (name.length <= maxLength) return name;
+                return name.substring(0, maxLength - 3) + '...';
+            }
+
+            // Initialize with focus on toggle button for accessibility
+            toggleBtn.focus();
+
+            // Keyboard shortcuts
+            document.addEventListener('keydown', function(e) {
+                // Ctrl+/ or Cmd+/ to toggle chat
+                if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+                    e.preventDefault();
+                    toggleBtn.click();
+                }
+
+                // Escape to close chat
+                if (e.key === 'Escape' && chatbox.getAttribute('aria-hidden') === 'false') {
+                    if (chatbox.classList.contains('fullscreen')) {
+                        fullscreenBtn.click();
+                    } else {
+                        closeBtn.click();
+                    }
+                }
+                
+                // Ctrl+Enter to send message
+                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                    e.preventDefault();
+                    form.dispatchEvent(new Event('submit'));
+                }
+            });
+
+            // ===== EXPOSE FILE FUNCTIONS TO GLOBAL SCOPE =====
+            // This allows chat.js to access the file attachment functions
+            window.getAttachedFiles = function() {
+                return [...window.credgenAttachedFiles]; // Return a copy
+            };
+
+            window.clearAttachments = clearAttachments;
+            window.addFileToPreview = addFilePreview;
+            window.removeFileFromPreview = removeFile;
+            window.formatBytes = formatBytes;
+            window.getFileIcon = getFileIcon;
+            window.getFileType = getFileType;
+            window.truncateFileName = truncateFileName;
+        });
+    </script>
+    
+    <!-- Unified chat.js handles all API calls and message handling -->
+    <script src="frontend/chat.js"></script>
+</body>
+</html>
